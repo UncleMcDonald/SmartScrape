@@ -30,11 +30,12 @@ interface ProductData {
 }
 
 interface ResultItem {
-  data: ProductData[];
+  data?: ProductData[];
   status: string;
   url: string;
   error?: string;
   reason?: string;
+  details?: string;
 }
 
 interface ApiResponse {
@@ -45,6 +46,7 @@ interface ApiResponse {
       batch_id: string;
       processing_time_seconds: number;
       timestamp_utc: string;
+      required_fields?: string[];
     };
     failed: number;
     successful: number;
@@ -208,19 +210,43 @@ export default function AIScraperUI() {
       
       if (data.success) {
         try {
-          // Collect errors for data items with error fields
-          const errors: ErrorInfo[] = data.data.results
-            .flatMap((result: ResultItem) => 
-              result.data
-                .filter((item: any) => item.error)
-                .map((item: any) => ({
-                  url: result.url,
-                  message: item.error,
-                  reason: item.reason
-                }))
-            );
+          console.log("完整API响应:", data);
           
-          // Create lookup object for failed URLs
+          // 检查results字段是否存在
+          if (!Array.isArray(data.data.results)) {
+            throw new Error("API响应中没有results数组");
+          }
+          
+          // 收集错误信息并处理failed状态的项目
+          const errors: ErrorInfo[] = [];
+          
+          // 先处理status为failed的项目
+          data.data.results.forEach((result: ResultItem) => {
+            if (result.status === "failed" || result.status === "error") {
+              errors.push({
+                url: result.url,
+                message: result.error || "Failed to extract data",
+                reason: result.details || result.reason || "Unknown error"
+              });
+            }
+          });
+          
+          // 再处理status为success但data中包含error字段的项目
+          data.data.results.forEach((result: ResultItem) => {
+            if (result.status === "success" && Array.isArray(result.data)) {
+              result.data.forEach((item: any) => {
+                if (item.error && item.error !== null) {
+                  errors.push({
+                    url: result.url,
+                    message: item.error,
+                    reason: item.reason || "The provided HTML does not contain the necessary data"
+                  });
+                }
+              });
+            }
+          });
+          
+          // 创建失败URL的查找对象
           const failedUrlsMap: Record<string, ErrorInfo> = {};
           errors.forEach(err => {
             failedUrlsMap[err.url] = err;
@@ -237,15 +263,24 @@ export default function AIScraperUI() {
             }
           }
           
-          // Store the raw data for export - only from successful extractions
-          const allProductData = data.data.results
-            .filter((result: ResultItem) => result.status === "success")
-            .flatMap((result: ResultItem) => result.data)
-            .filter((item: any) => !item.error);
+          // 收集成功的产品数据
+          const allProductData: ProductData[] = [];
+          
+          // 安全地处理数据
+          data.data.results.forEach((result: ResultItem) => {
+            if (result.status === "success" && Array.isArray(result.data)) {
+              result.data.forEach((item: any) => {
+                // 只添加没有error字段或error为null的项目
+                if (!item.error || item.error === null) {
+                  allProductData.push(item);
+                }
+              });
+            }
+          });
           
           setRawApiData(allProductData);
           
-          // Only continue with successful results
+          // 只有在有成功结果时才继续
           if (allProductData.length === 0) {
             if (errors.length === 0) {
               setError("No product data successfully extracted");
@@ -253,127 +288,121 @@ export default function AIScraperUI() {
             return;
           }
           
-          // Extract all unique keys from response data for table columns
+          // 从响应数据中提取所有唯一键以用于表格列
           const allKeys = new Set<string>();
           allProductData.forEach(item => {
             Object.keys(item).forEach(key => allKeys.add(key));
           });
           
-          // Check if any image fields exist in the data
+          // 检查数据中是否存在任何图片字段
           const hasImageField = Array.from(allKeys).some(key => 
             imageFieldNames.includes(key) || key.toLowerCase().includes('image')
           );
           
-          // Sort keys to put important ones first and explicitly exclude error fields
+          // 优先排序重要的键并明确排除错误字段
           const sortedKeys = Array.from(allKeys)
             .filter(key => !['error', 'reason'].includes(key.toLowerCase()))
             .sort((a, b) => {
-              // If both keys have preferred mappings
+              // 如果两个键都有首选映射
               if (preferredOrder[a] && preferredOrder[b]) {
-                // Sort by the order of the values in preferredOrder
+                // 按照preferredOrder中的值排序
                 const aIndex = Object.values(preferredOrder).indexOf(preferredOrder[a]);
                 const bIndex = Object.values(preferredOrder).indexOf(preferredOrder[b]);
                 return aIndex - bIndex;
               }
-              // If only a has a preferred mapping
+              // 如果只有a有首选映射
               if (preferredOrder[a]) return -1;
-              // If only b has a preferred mapping
+              // 如果只有b有首选映射
               if (preferredOrder[b]) return 1;
-              // Otherwise sort alphabetically
+              // 否则按字母顺序排序
               return a.localeCompare(b);
             });
           
-          // Map to friendly names where available
+          // 将可用的映射到友好名称
           let displayColumns = sortedKeys
             .filter(key => !imageFieldNames.includes(key) && !key.toLowerCase().includes('image'))
             .map(key => preferredOrder[key] || key);
           
-          // Remove duplicates
+          // 删除重复项
           displayColumns = Array.from(new Set(displayColumns));
           
-          // Add Image column for images if we have image fields and place it at the beginning
+          // 添加Image列如果有图片字段并放在最前面
           if (hasImageField) {
             displayColumns = ["Image", ...displayColumns];
           }
           
-          // Update table columns
+          // 更新表格列
           setTableColumns(displayColumns);
           
-          // Process successful results for display
-          const processedResults = data.data.results
-            .filter((result: ResultItem) => result.status === "success")
-            .flatMap((result: ResultItem) => {
-              // 打印整个result对象以检查数据结构
-              console.log("处理URL:", result.url);
-              console.log("整个result对象:", result);
-              
-              return result.data
-                .filter((item: ProductData) => {
-                  // 排除有错误或原因字段的项目
-                  const itemAsAny = item as any;
-                  if (itemAsAny.error) {
-                    console.log("跳过带error字段的项目:", itemAsAny.error);
-                    return false;
-                  }
-                  return true;
-                })
-                .map((item: ProductData) => {
-                  // 记录所有字段以便调试
-                  logAllFields(item, "产品数据项");
+          // 处理成功的结果以便显示
+          const processedResults: Record<string, any>[] = [];
+          
+          // 安全地处理每个结果项
+          data.data.results.forEach((result: ResultItem) => {
+            if (result.status === "success" && Array.isArray(result.data)) {
+              result.data.forEach((item: any) => {
+                // 排除有error字段的项目(非null值)
+                if (item.error !== undefined && item.error !== null) {
+                  return;
+                }
+                
+                // 记录所有字段以便调试
+                logAllFields(item, "产品数据项");
+                
+                // 创建基本结果对象
+                const resultItem: Record<string, any> = {
+                  name: item.name || 'Unknown Name',
+                  price: item.price || 'N/A',
+                  description: item.description || 'No description available',
+                };
+                
+                // 更全面地搜索图片URL
+                if (hasImageField) {
+                  // 尝试查找所有可能的图片URL字段
+                  let foundImageUrl = null;
                   
-                  // 创建基本结果对象
-                  const resultItem: Record<string, any> = {
-                    name: item.name || 'Unknown Name',
-                    price: item.price || 'N/A',
-                    description: item.description || 'No description available',
-                  };
-                  
-                  // 更全面地搜索图片URL
-                  if (hasImageField) {
-                    // 尝试查找所有可能的图片URL字段
-                    let foundImageUrl = null;
-                    
-                    // 优先级1：直接匹配已知的图片字段名
-                    for (const fieldName of imageFieldNames) {
-                      if ((item as any)[fieldName]) {
-                        foundImageUrl = (item as any)[fieldName];
-                        console.log(`找到图片URL(直接匹配): ${fieldName} = ${foundImageUrl}`);
-                        break;
-                      }
+                  // 优先级1：直接匹配已知的图片字段名
+                  for (const fieldName of imageFieldNames) {
+                    if ((item as any)[fieldName]) {
+                      foundImageUrl = (item as any)[fieldName];
+                      console.log(`找到图片URL(直接匹配): ${fieldName} = ${foundImageUrl}`);
+                      break;
                     }
-                    
-                    // 优先级2：搜索包含'image'或'img'的字段
-                    if (!foundImageUrl) {
-                      for (const key in item) {
-                        if (key.toLowerCase().includes('image') || key.toLowerCase().includes('img') || key.toLowerCase().includes('url')) {
-                          if ((item as any)[key] && typeof (item as any)[key] === 'string') {
-                            foundImageUrl = (item as any)[key];
-                            console.log(`找到图片URL(关键词匹配): ${key} = ${foundImageUrl}`);
-                            break;
-                          }
+                  }
+                  
+                  // 优先级2：搜索包含'image'或'img'的字段
+                  if (!foundImageUrl) {
+                    for (const key in item) {
+                      if (key.toLowerCase().includes('image') || key.toLowerCase().includes('img') || key.toLowerCase().includes('url')) {
+                        if ((item as any)[key] && typeof (item as any)[key] === 'string') {
+                          foundImageUrl = (item as any)[key];
+                          console.log(`找到图片URL(关键词匹配): ${key} = ${foundImageUrl}`);
+                          break;
                         }
                       }
                     }
-                    
-                    // 保存找到的图片URL
-                    resultItem.originalImageUrl = foundImageUrl;
-                    resultItem.previewImage = normalizeImageUrl(foundImageUrl);
-                    
-                    console.log("最终图片URL:", resultItem.originalImageUrl);
-                    console.log("预览图片URL:", resultItem.previewImage);
                   }
                   
-                  // 添加所有附加字段
-                  for (const key of sortedKeys) {
-                    if (!['name', 'price', 'description', 'error', 'reason'].includes(key.toLowerCase()) && 
-                        !imageFieldNames.includes(key) && !key.toLowerCase().includes('image')) {
-                      resultItem[key] = item[key as keyof ProductData] || '';
-                    }
-                  }
+                  // 保存找到的图片URL
+                  resultItem.originalImageUrl = foundImageUrl;
+                  resultItem.previewImage = normalizeImageUrl(foundImageUrl);
                   
-                  return resultItem;
-                });
-            });
+                  console.log("最终图片URL:", resultItem.originalImageUrl);
+                  console.log("预览图片URL:", resultItem.previewImage);
+                }
+                
+                // 添加所有附加字段
+                for (const key of sortedKeys) {
+                  if (!['name', 'price', 'description', 'error', 'reason'].includes(key.toLowerCase()) && 
+                      !imageFieldNames.includes(key) && !key.toLowerCase().includes('image')) {
+                    resultItem[key] = (item as any)[key] || '';
+                  }
+                }
+                
+                processedResults.push(resultItem);
+              });
+            }
+          });
           
           setResults(processedResults);
         } catch (err: any) {

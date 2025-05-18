@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, send_file
 from .scraper import scrape_url, extract_main_content, process_product_url, process_batch_urls
 from .llm_processor import extract_data_with_llm
+from .config import USE_PRODUCTION_OPTIMIZATIONS
 # Remove save_to_csv as it's not used in the new batch endpoint logic directly
 # from .exporter import save_to_csv 
 # Instead, if export is needed, it would be part of process_product_url_for_api or a separate step
@@ -15,6 +16,7 @@ def process():
     data = request.json
     url = data.get('url')
     prompt = data.get('prompt')  # 用户的自然语言提示
+    is_production = data.get('is_production')  # 如果提供了明确的环境设置，则使用它
 
     if not url:
         return jsonify({'success': False, 'error': {'code': 'INVALID_INPUT', 'message': 'URL is required'}}), 400
@@ -24,8 +26,12 @@ def process():
         prompt = str(prompt)  # 尝试转换为字符串
 
     try:
+        # 打印当前环境模式
+        env_mode = "default" if is_production is None else ("production" if is_production else "local")
+        print(f"[API] Processing URL in {env_mode} mode, USE_PRODUCTION_OPTIMIZATIONS={USE_PRODUCTION_OPTIMIZATIONS}")
+        
         # 使用用户提供的自然语言prompt直接调用处理函数
-        result_data = process_product_url(url, prompt, extract_data_with_llm)
+        result_data = process_product_url(url, prompt, extract_data_with_llm, is_production)
         
         if isinstance(result_data, dict) and "error" in result_data:
             return jsonify({"success": False, "error": {"code": "PROCESSING_ERROR", "message": result_data.get("error"), "url": url }}), 500
@@ -41,6 +47,7 @@ def batch_process():
     urls = data.get('urls')
     prompt = data.get('prompt')  # 用户的自然语言提示
     options = data.get('options', {})
+    is_production = options.get('is_production')  # 如果在options中明确提供了环境设置
 
     if not urls or not isinstance(urls, list):
         return jsonify({"success": False, "error": {"code": "INVALID_INPUT", "message": "Missing or invalid 'urls' list"}}), 400
@@ -52,13 +59,18 @@ def batch_process():
     parallel_count = options.get('parallel', 3)
     if not isinstance(parallel_count, int) or parallel_count <= 0:
         parallel_count = 3  # 默认为3，如果无效
+    
+    # 打印当前环境模式
+    env_mode = "default" if is_production is None else ("production" if is_production else "local")
+    print(f"[API] Batch processing {len(urls)} URLs in {env_mode} mode, USE_PRODUCTION_OPTIMIZATIONS={USE_PRODUCTION_OPTIMIZATIONS}")
 
     # 调用scraper模块中的批处理函数，直接传递用户提供的自然语言prompt
     result = process_batch_urls(
         urls=urls,
         prompt_str=prompt,
         parallel_count=parallel_count,
-        llm_processor=extract_data_with_llm
+        llm_processor=extract_data_with_llm,
+        is_production=is_production
     )
     
     # 如果process_batch_urls返回错误信息
@@ -72,7 +84,8 @@ def batch_process():
             **result,  # 解包result字典
             "metadata": {
                 **result.get("metadata", {}),  # 保留原始元数据
-                "batch_id": f"batch_{uuid.uuid4()}"  # 添加批处理ID
+                "batch_id": f"batch_{uuid.uuid4()}",  # 添加批处理ID
+                "optimization_mode": result.get("metadata", {}).get("environment", "unknown")  # 添加优化模式信息
             }
         }
     }

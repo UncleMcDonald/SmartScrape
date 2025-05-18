@@ -5,6 +5,10 @@ import threading
 import json
 import re
 from urllib.parse import urljoin, urlparse
+import os
+import hashlib
+from datetime import datetime
+import uuid
 
 from bs4 import BeautifulSoup, FeatureNotFound
 from selenium import webdriver
@@ -15,6 +19,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from bs4.element import Tag
+from .config import USE_PRODUCTION_OPTIMIZATIONS
 
 
 BROWSERS = {
@@ -58,27 +63,44 @@ def generate_random_user_agent() -> str:
     ua = f"Mozilla/5.0 ({os_str}) AppleWebKit/537.36 (KHTML, like Gecko) {ua_fragment}"
     return ua
 
-def get_chrome_options(user_agent=None):
-    """获取Chrome配置，可选指定User-Agent，优化内存使用"""
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")  # 无头模式
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
+def get_chrome_options(user_agent=None, is_production=None):
+    """
+    获取Chrome配置，可选指定User-Agent，优化内存使用
     
-    # 内存优化设置
-    chrome_options.add_argument("--disable-gpu")  # 禁用GPU加速
-    chrome_options.add_argument("--disable-extensions")  # 禁用扩展
-    chrome_options.add_argument("--disable-software-rasterizer")  # 禁用软件光栅化
-    chrome_options.add_argument("--disable-webgl")  # 禁用WebGL
-    chrome_options.add_argument("--disable-3d-apis")  # 禁用3D API
-    chrome_options.add_argument("--disable-canvas-aa")  # 禁用画布抗锯齿
-    chrome_options.add_argument("--disable-accelerated-2d-canvas")  # 禁用加速2D画布
-    chrome_options.add_argument("--disable-dev-shm-usage")  # 禁用/dev/shm
-    chrome_options.add_argument("--remote-debugging-port=9222")  # 远程调试端口
-    chrome_options.add_argument("--disable-bundled-ppapi-flash")  # 禁用捆绑的Flash
-    chrome_options.add_argument("--disable-infobars")  # 禁用信息栏
-    chrome_options.add_argument("--mute-audio")  # 静音
-    chrome_options.add_argument("--window-size=800,600")  # 设置较小的窗口尺寸
+    :param user_agent: 自定义User-Agent，默认为None时随机生成
+    :param is_production: 是否为生产环境，默认为None时使用配置文件中的设置
+    """
+    # 如果未指定is_production，使用全局配置
+    if is_production is None:
+        is_production = USE_PRODUCTION_OPTIMIZATIONS
+    
+    chrome_options = Options()
+    
+    # 基础配置
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    
+    # 生产环境特定的内存优化设置
+    if is_production:
+        print(f"[Chrome] Using PRODUCTION memory optimization settings (is_production={is_production}, USE_PRODUCTION_OPTIMIZATIONS={USE_PRODUCTION_OPTIMIZATIONS})")
+        chrome_options.add_argument("--disable-dev-shm-usage")  # 禁用/dev/shm
+        chrome_options.add_argument("--disable-gpu")  # 禁用GPU加速
+        chrome_options.add_argument("--disable-extensions")  # 禁用扩展
+        chrome_options.add_argument("--disable-software-rasterizer")  # 禁用软件光栅化
+        chrome_options.add_argument("--disable-webgl")  # 禁用WebGL
+        chrome_options.add_argument("--disable-3d-apis")  # 禁用3D API
+        chrome_options.add_argument("--disable-canvas-aa")  # 禁用画布抗锯齿
+        chrome_options.add_argument("--disable-accelerated-2d-canvas")  # 禁用加速2D画布
+        chrome_options.add_argument("--window-size=800,600")  # 设置较小的窗口尺寸
+        chrome_options.add_argument("--disable-bundled-ppapi-flash")  # 禁用捆绑的Flash
+        chrome_options.add_argument("--disable-infobars")  # 禁用信息栏
+        chrome_options.add_argument("--mute-audio")  # 静音
+    else:
+        print(f"[Chrome] Using LOCAL environment settings (NO memory optimization) (is_production={is_production}, USE_PRODUCTION_OPTIMIZATIONS={USE_PRODUCTION_OPTIMIZATIONS})")
+        chrome_options.add_argument("--window-size=1366,768")  # 设置适合本地开发的较大窗口尺寸
+    
+
+
     
     # 随机或指定User-Agent
     if user_agent is None:
@@ -90,16 +112,21 @@ def get_chrome_options(user_agent=None):
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option("useAutomationExtension", False)
     
-    # 禁用图片加载以提高性能
-    chrome_options.add_experimental_option("prefs", {
-        "profile.managed_default_content_settings.images": 2,
+    # 根据环境调整图片加载设置
+    prefs = {
         "profile.default_content_setting_values.notifications": 2,
         "profile.managed_default_content_settings.javascript": 1,
         "profile.managed_default_content_settings.plugins": 2,
         "profile.managed_default_content_settings.popups": 2,
         "profile.managed_default_content_settings.geolocation": 2,
         "profile.managed_default_content_settings.media_stream": 2
-    })
+    }
+    
+    # 生产环境禁用图片加载以节省内存
+    if is_production:
+        prefs["profile.managed_default_content_settings.images"] = 2
+    
+    chrome_options.add_experimental_option("prefs", prefs)
     
     return chrome_options
 
@@ -155,10 +182,21 @@ def is_access_limited(resp: Response, *, threshold: int = 3) -> Tuple[bool, int]
     return score >= threshold, score
 
 
-def scrape_url(url):
+def scrape_url(url, is_production=None):
+    """
+    抓取URL内容
+    
+    :param url: 要抓取的URL
+    :param is_production: 是否使用生产环境配置，默认为None时使用配置文件中的设置
+    :return: 页面内容或错误信息
+    """
     # 最多尝试5次（增加重试次数）
     max_retries = 3
     retry_delay_base = 3  # 基础等待时间(秒)
+    
+    # 打印当前环境设置
+    env_mode = "PRODUCTION" if (is_production if is_production is not None else USE_PRODUCTION_OPTIMIZATIONS) else "LOCAL"
+    print(f"[Scraper] Starting scrape_url in {env_mode} mode for: {url}")
     
     used_user_agents = set()  # 记录已使用过的User-Agent
     
@@ -172,16 +210,22 @@ def scrape_url(url):
             
             used_user_agents.add(current_user_agent)
             
-            # 配置Chrome
-            chrome_options = get_chrome_options(current_user_agent)
+            # 配置Chrome，传入环境标识
+            chrome_options = get_chrome_options(current_user_agent, is_production)
             
             driver = webdriver.Chrome(options=chrome_options)
             driver.set_page_load_timeout(30)
             
-            # 随机化窗口大小，避免指纹识别
-            width = random.randint(1024, 1920)
-            height = random.randint(768, 1080)
-            driver.set_window_size(width, height)
+            # 随机化窗口大小，避免指纹识别（仅在非生产环境中，生产环境使用固定较小窗口）
+            if is_production is None:
+                is_prod = USE_PRODUCTION_OPTIMIZATIONS
+            else:
+                is_prod = is_production
+                
+            if not is_prod:
+                width = random.randint(1024, 1920)
+                height = random.randint(768, 1080)
+                driver.set_window_size(width, height)
             
             # 访问页面
             print(f"Attempt {attempt + 1}: Accessing {url}")
@@ -378,8 +422,11 @@ def get_image_selection_prompt(top_images, prompt_str):
     """
     if not top_images:
         return prompt_str
+    
+    # 生成唯一ID，确保每次提示词不同，避免LLM缓存导致的重复结果
+    unique_id = str(uuid.uuid4())[:8]
         
-    image_info = "\n\nPotential product images found (sorted by relevance):\n"
+    image_info = f"\n\nPotential product images found (ID: {unique_id}):\n"
     for i, img in enumerate(top_images, 1):
         image_info += f"{i}. URL: {img['url']}\n"
         if 'alt' in img and img['alt']:
@@ -480,15 +527,25 @@ def should_include_image(prompt_str):
     return False
 
 
-def process_product_url(url: str, prompt_str: str = None, llm_processor=None):
+def process_product_url(url: str, prompt_str: str = None, llm_processor=None, is_production=None):
     """
     处理单个产品URL的函数
     
     :param url: 要处理的URL
     :param prompt_str: 提示词字符串
     :param llm_processor: LLM处理函数
+    :param is_production: 是否使用生产环境配置，默认为None时使用配置文件中的设置
     :return: 结构化数据或错误信息
     """
+    # 环境信息
+    if is_production is None:
+        is_prod = USE_PRODUCTION_OPTIMIZATIONS
+    else:
+        is_prod = is_production
+    
+    env_mode = "PRODUCTION" if is_prod else "LOCAL"
+    print(f"[Product URL] Processing in {env_mode} mode: {url}")
+    
     # 检查是否提供了LLM处理器
     if llm_processor is None:
         return {"error": "LLM processor not provided"}
@@ -497,7 +554,7 @@ def process_product_url(url: str, prompt_str: str = None, llm_processor=None):
     include_image = should_include_image(prompt_str)
     
     # 1. 使用scrape_url获取HTML内容
-    html_content = scrape_url(url)
+    html_content = scrape_url(url, is_production)
     if isinstance(html_content, dict) and "error" in html_content:
         return html_content
     
@@ -526,6 +583,12 @@ def process_product_url(url: str, prompt_str: str = None, llm_processor=None):
     if include_image and top_images:
         enhanced_prompt = get_image_selection_prompt(top_images, prompt_str)
     
+    # 添加URL信息到提示词，确保不同URL有不同的处理结果
+    if enhanced_prompt:
+        enhanced_prompt = f"{enhanced_prompt}\nURL being processed: {url}"
+    else:
+        enhanced_prompt = f"Extract product information from this content.\nURL being processed: {url}"
+    
     # 4. 使用LLM处理器提取结构化数据
     structured_data = llm_processor(clean_text, enhanced_prompt)
     
@@ -546,7 +609,7 @@ def process_product_url(url: str, prompt_str: str = None, llm_processor=None):
     
     return structured_data
 
-def worker(url_queue, results_list, prompt_str, llm_processor):
+def worker(url_queue, results_list, prompt_str, llm_processor, is_production=None):
     """
     工作线程函数，从队列获取URL并处理
     
@@ -554,6 +617,7 @@ def worker(url_queue, results_list, prompt_str, llm_processor):
     :param results_list: 结果列表
     :param prompt_str: 提示词
     :param llm_processor: LLM处理函数
+    :param is_production: 是否使用生产环境配置，默认为None时使用配置文件中的设置
     """
     while not url_queue.empty():
         try:
@@ -561,7 +625,7 @@ def worker(url_queue, results_list, prompt_str, llm_processor):
             url = url_queue.get_nowait()
             
             # 使用process_product_url处理URL
-            result = process_product_url(url, prompt_str, llm_processor)
+            result = process_product_url(url, prompt_str, llm_processor, is_production)
             
             # 根据结果类型添加到结果列表
             if isinstance(result, dict) and "error" in result:
@@ -698,7 +762,7 @@ def normalize_result_fields(results, required_fields):
     
     return normalized_results
 
-def process_batch_urls(urls, prompt_str=None, parallel_count=3, llm_processor=None):
+def process_batch_urls(urls, prompt_str=None, parallel_count=3, llm_processor=None, is_production=None):
     """
     批量处理URL
     
@@ -706,8 +770,18 @@ def process_batch_urls(urls, prompt_str=None, parallel_count=3, llm_processor=No
     :param prompt_str: 提示词
     :param parallel_count: 并行处理数量
     :param llm_processor: LLM处理函数
+    :param is_production: 是否使用生产环境配置，默认为None时使用配置文件中的设置
     :return: 处理结果
     """
+    # 环境信息
+    if is_production is None:
+        is_prod = USE_PRODUCTION_OPTIMIZATIONS
+    else:
+        is_prod = is_production
+    
+    env_mode = "PRODUCTION" if is_prod else "LOCAL"
+    print(f"[Batch Process] Starting batch processing of {len(urls)} URLs in {env_mode} mode")
+    
     if not llm_processor:
         return {"success": False, "error": {"code": "PROCESSOR_ERROR", "message": "LLM processor not provided"}}
     
@@ -736,7 +810,7 @@ def process_batch_urls(urls, prompt_str=None, parallel_count=3, llm_processor=No
     for _ in range(min(parallel_count, len(urls))):
         thread = threading.Thread(
             target=worker,
-            args=(url_queue, results, enhanced_prompt, llm_processor)
+            args=(url_queue, results, enhanced_prompt, llm_processor, is_production)
         )
         threads.append(thread)
         thread.start()
@@ -760,7 +834,8 @@ def process_batch_urls(urls, prompt_str=None, parallel_count=3, llm_processor=No
         "metadata": {
             "processing_time_seconds": processing_time,
             "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "required_fields": required_fields
+            "required_fields": required_fields,
+            "environment": "production" if is_prod else "local"
         }
     }
 
