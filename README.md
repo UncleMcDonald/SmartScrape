@@ -4,13 +4,21 @@ SmartScrape Studio is an AI-powered web scraping API that extracts structured da
 
 Demo: https://smart-scrape-five.vercel.app/
 
-⚠️ **Note on Budget Constraints**
+⚠️ **Note on Budget & Resource Constraints**
 
-Given the $50 budget for the AI Challenge, running a crawler-based application in the cloud (e.g., Render, Railway) can be quite challenging due to memory and timeout limitations.  
-To ensure better performance and stability, I kindly suggest running the scraping component **locally**, if possible.
+Due to the $50 budget for the AI Challenge, running a crawler-based application in the cloud (e.g., Render, Railway) is particularly constrained by:
 
+- **Memory limits**: Headless browsers like Chrome require significant RAM and may easily trigger *Out of Memory (OOM)* errors.
+- **Concurrency limits**: Worker threads are throttled, and parallel scraping can be unstable.
 
-[🎥 Watch demo video](https://youtu.be/el4OY9WH6fg)
+As a result, the scraping component may be **slow or unstable** when deployed online.
+
+👉 **For best performance**, I kindly recommend running the scraper **locally** on your machine, and only using the backend API or front-end demo in the cloud if needed.
+
+🎬 **Watch the Demo Video**
+
+👉 [Click here to watch on YouTube](https://youtu.be/el4OY9WH6fg)
+
 ## Features
 
 - **AI-Powered Extraction**: Uses GPT-4o to intelligently extract data from any e-commerce product page
