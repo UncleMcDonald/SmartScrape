@@ -4,6 +4,12 @@ SmartScrape Studio is an AI-powered web scraping API that extracts structured da
 
 Demo: https://smart-scrape-five.vercel.app/
 
+⚠️ **Note on Budget Constraints**
+
+Given the $50 monthly budget, running a crawler-based application in the cloud (e.g., Render, Railway) can be quite challenging due to memory and timeout limitations.  
+To ensure better performance and stability, I kindly suggest running the scraping component **locally**, if possible.
+
+
 [🎥 Watch demo video](https://youtu.be/el4OY9WH6fg)
 ## Features
 
