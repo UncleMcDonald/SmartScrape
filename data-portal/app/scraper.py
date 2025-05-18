@@ -378,6 +378,111 @@ def worker(url_queue, results_list, prompt_str, llm_processor):
                 # 标记任务完成
                 url_queue.task_done()
 
+def analyze_fields_with_llm(prompt_str, llm_processor):
+    """
+    使用LLM分析提示词，确定需要提取的字段
+    
+    :param prompt_str: 用户的提示词
+    :param llm_processor: LLM处理函数
+    :return: 标准化的字段列表
+    """
+    field_analysis_prompt = f"""
+Based on this user instruction: "{prompt_str}", determine what fields/data should be extracted from product pages.
+Return ONLY a JSON array of field names that should be extracted. Example: ["name", "price", "description"]
+
+IMPORTANT: Keep field names simple, consistent, and in English. Use snake_case format.
+"""
+    
+    # 调用LLM获取字段列表
+    try:
+        # 使用task参数调用LLM处理器
+        response = llm_processor(field_analysis_prompt, prompt_str, task="analyze_fields")
+        if isinstance(response, list) and len(response) > 0:
+            # 如果响应是数组中的对象
+            if isinstance(response[0], dict):
+                # 尝试从中提取字段列表
+                if "fields" in response[0]:
+                    return response[0]["fields"]
+                # 如果对象本身包含字段作为键
+                return list(response[0].keys())
+            # 如果是字符串列表
+            elif isinstance(response[0], str):
+                return response
+        # 默认字段列表，如果无法从LLM获取
+        return ["name", "price", "description", "delivery"]
+    except Exception as e:
+        print(f"Error analyzing fields: {e}")
+        # 返回默认字段
+        return ["name", "price", "description", "delivery"]
+
+def normalize_result_fields(results, required_fields):
+    """
+    标准化结果中的字段，确保每个结果都有相同的字段
+    
+    :param results: 处理结果列表
+    :param required_fields: 必须包含的字段列表
+    :return: 标准化后的结果列表
+    """
+    # 创建标准字段映射
+    field_mapping = {
+        # 常见变种映射到标准字段
+        "product_name": "name",
+        "title": "name",
+        "product": "name",
+        "item_name": "name",
+        
+        "product_price": "price",
+        "pricing": "price",
+        "cost": "price",
+        "value": "price",
+        
+        "product_description": "description",
+        "details": "description",
+        "desc": "description",
+        "specifications": "description",
+        "specs": "description",
+        "detail": "description",
+        
+        "shipping": "delivery",
+        "delivery_info": "delivery",
+        "shipping_info": "delivery",
+        "delivery_options": "delivery",
+        "delivery_method": "delivery",
+        
+        "release_date": "delivery_in_days",
+        "available_date": "delivery_in_days",
+        "estimated_delivery": "delivery_in_days",
+        "delivery_date": "delivery_in_days",
+        "date": "delivery_in_days",
+    }
+    
+    normalized_results = []
+    for result in results:
+        if result["status"] == "success" and "data" in result:
+            # 处理data中的每个项目
+            if isinstance(result["data"], list):
+                normalized_data = []
+                for item in result["data"]:
+                    # 规范化当前项目的字段
+                    normalized_item = {}
+                    
+                    # 将已有字段标准化
+                    for key, value in item.items():
+                        # 检查键是否在映射中，如果是则使用标准名称
+                        standard_key = field_mapping.get(key.lower(), key)
+                        normalized_item[standard_key] = value
+                    
+                    # 确保所有必需字段都存在
+                    for field in required_fields:
+                        if field not in normalized_item:
+                            normalized_item[field] = None
+                            
+                    normalized_data.append(normalized_item)
+                result["data"] = normalized_data
+        normalized_results.append(result)
+    
+    return normalized_results
+
 def process_batch_urls(urls, prompt_str=None, parallel_count=3, llm_processor=None):
     """
     批量处理URL
@@ -393,6 +498,16 @@ def process_batch_urls(urls, prompt_str=None, parallel_count=3, llm_processor=No
     
     start_time = time.time()
     
+    # 第1步：分析提示词，确定需要提取的字段
+    required_fields = analyze_fields_with_llm(prompt_str, llm_processor)
+    print(f"Required fields determined: {required_fields}")
+    
+    # 修改提示词，确保LLM提取所有必要字段
+    enhanced_prompt = prompt_str
+    if prompt_str:
+        field_list = ", ".join(required_fields)
+        enhanced_prompt = f"{prompt_str}. Make sure to extract these fields: {field_list}."
+    
     # 创建URL队列
     url_queue = queue.Queue()
     for url in urls:
@@ -406,7 +521,7 @@ def process_batch_urls(urls, prompt_str=None, parallel_count=3, llm_processor=No
     for _ in range(min(parallel_count, len(urls))):
         thread = threading.Thread(
             target=worker,
-            args=(url_queue, results, prompt_str, llm_processor)
+            args=(url_queue, results, enhanced_prompt, llm_processor)
         )
         threads.append(thread)
         thread.start()
@@ -414,19 +529,23 @@ def process_batch_urls(urls, prompt_str=None, parallel_count=3, llm_processor=No
     # 等待所有任务完成
     url_queue.join()
     
+    # 标准化结果中的字段
+    normalized_results = normalize_result_fields(results, required_fields)
+    
     # 计算统计信息
     end_time = time.time()
     processing_time = round(end_time - start_time, 2)
-    successful = sum(1 for r in results if r["status"] == "success")
+    successful = sum(1 for r in normalized_results if r["status"] == "success")
     
     return {
         "total": len(urls),
         "successful": successful,
         "failed": len(urls) - successful,
-        "results": results,
+        "results": normalized_results,
         "metadata": {
             "processing_time_seconds": processing_time,
-            "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "required_fields": required_fields
         }
     }
 

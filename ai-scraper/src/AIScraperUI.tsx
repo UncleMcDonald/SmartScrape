@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { Plus, Trash2, FileDown, FileJson, FileSpreadsheet, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, type ChangeEvent, type KeyboardEvent } from "react";
+import * as XLSX from 'xlsx';
 
 // Add interface definitions for API response
 interface ProductData {
@@ -335,11 +336,16 @@ export default function AIScraperUI() {
   };
   
   const handleExportExcel = async () => {
-    if (!rawApiData.length) return;
+    if (!rawApiData.length) {
+      console.log("No data to export");
+      alert("No data to export");
+      return;
+    }
+    
+    console.log("Starting Excel export. Data count:", rawApiData.length);
     
     try {
-      // Dynamically import the xlsx library
-      const XLSX = await import('xlsx').then(mod => mod.default);
+      console.log("XLSX library loaded:", typeof XLSX);
       
       // Get all unique keys from all data objects
       const allKeys = new Set<string>();
@@ -348,30 +354,46 @@ export default function AIScraperUI() {
       });
       
       const headers = Array.from(allKeys);
+      console.log("Export headers:", headers);
       
-      // Prepare worksheet data
-      const wsData = [
-        headers,
-        ...rawApiData.map(item => 
-          headers.map(key => (item as any)[key] !== undefined ? (item as any)[key] : '')
-        )
-      ];
+      // Prepare worksheet data with simpler approach
+      const wsData = [];
+      wsData.push(headers);
+      
+      for (const item of rawApiData) {
+        const row = [];
+        for (const key of headers) {
+          row.push(item[key as keyof typeof item] || '');
+        }
+        wsData.push(row);
+      }
+      
+      console.log("Worksheet data prepared. Rows:", wsData.length);
       
       // Create worksheet
       const ws = XLSX.utils.aoa_to_sheet(wsData);
+      console.log("Worksheet created");
       
       // Create workbook
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Scraped Data");
+      console.log("Workbook created with sheet");
       
       // Generate timestamp for filename
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `scraped_results_${timestamp}.xlsx`;
       
       // Export to Excel
-      XLSX.writeFile(wb, `scraped_results_${timestamp}.xlsx`);
+      console.log("Attempting to write file:", filename);
+      XLSX.writeFile(wb, filename);
+      console.log("Excel export completed");
     } catch (error) {
-      console.error("Failed to export Excel file:", error);
-      alert("Excel export failed. Please ensure the xlsx library is installed and try again.");
+      console.error("Excel export error details:", error);
+      if (error instanceof Error) {
+        alert(`Excel export failed: ${error.message}\n\nCheck the console for more details.`);
+      } else {
+        alert("Excel export failed with an unknown error. Check the console for details.");
+      }
     }
   };
 
@@ -412,29 +434,6 @@ export default function AIScraperUI() {
       </div>
     );
   };
-
-  // Render error messages
-  // const renderErrors = () => {
-  //   if (!urlErrors.length) return null;
-    
-  //   return (
-  //     <div className="mt-4 border border-red-200 rounded-lg bg-red-50 p-3">
-  //       <div className="flex items-center gap-2 text-sm text-red-600 font-medium mb-2">
-  //         <AlertCircle className="h-4 w-4" />
-  //         Failed URLs
-  //       </div>
-  //       <div className="max-h-40 overflow-y-auto">
-  //         {urlErrors.map((err, i) => (
-  //           <div key={i} className="text-xs mb-2 pb-2 border-b border-red-100 last:border-0">
-  //             <div className="font-semibold text-red-700 truncate" title={err.url}>{err.url}</div>
-  //             <div className="text-red-600">{err.message || "Failed to extract data"}</div>
-  //             {err.reason && <div className="text-red-500 mt-1">{err.reason}</div>}
-  //           </div>
-  //         ))}
-  //       </div>
-  //     </div>
-  //   );
-  // };
 
   // Replace the URL input rendering with error indicators
   const renderUrlInput = (u: string, i: number) => {
