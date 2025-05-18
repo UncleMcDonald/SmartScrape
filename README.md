@@ -15,8 +15,8 @@ As a result, the scraping component may be **slow or unstable** when deployed on
 
 👉 **For best performance**, I kindly recommend running the scraper **locally** on your machine, and only using the backend API or front-end demo in the cloud if needed.
 
-🎬 **Watch the Demo Video**
 
+🎬 **Watch the Demo Video**
 👉 [Click here to watch on YouTube](https://youtu.be/el4OY9WH6fg)
 
 ## Features
