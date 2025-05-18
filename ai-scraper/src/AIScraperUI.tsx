@@ -170,7 +170,7 @@ export default function AIScraperUI() {
     
     try {
       // 使用提供的生产环境后端地址
-      const apiBaseUrl = 'https://secure-motivation-production.up.railway.app';
+      const apiBaseUrl = 'https://smartscrape-i5ns.onrender.com';
       const response = await fetch(`${apiBaseUrl}/api/batch-process`, {
         method: 'POST',
         headers: {
