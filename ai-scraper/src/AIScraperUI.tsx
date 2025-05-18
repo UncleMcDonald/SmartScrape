@@ -58,7 +58,14 @@ interface ErrorInfo {
   reason?: string;
 }
 
+// 添加环境检测和API基础URL配置
+// 在组件顶部添加API URL配置
 export default function AIScraperUI() {
+  // API基础URL配置
+  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const LOCAL_API_URL = 'http://localhost:5000';
+  const PRODUCTION_API_URL = 'https://smartscrape-i5ns.onrender.com';
+  
   const [instruction, setInstruction] = useState<string>("");
   const [urls, setUrls] = useState<string[]>([""]);
   const [isRunning, setIsRunning] = useState(false);
@@ -169,8 +176,10 @@ export default function AIScraperUI() {
     progressInterval = setInterval(updateProgress, 100);
     
     try {
-      // 使用提供的生产环境后端地址
-      const apiBaseUrl = 'https://smartscrape-i5ns.onrender.com';
+      // 根据环境自动选择API地址
+      const apiBaseUrl = isLocalhost ? LOCAL_API_URL : PRODUCTION_API_URL;
+      console.log(`使用API地址: ${apiBaseUrl}`);
+      
       const response = await fetch(`${apiBaseUrl}/api/batch-process`, {
         method: 'POST',
         headers: {

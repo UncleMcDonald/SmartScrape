@@ -59,11 +59,26 @@ def generate_random_user_agent() -> str:
     return ua
 
 def get_chrome_options(user_agent=None):
-    """获取Chrome配置，可选指定User-Agent"""
+    """获取Chrome配置，可选指定User-Agent，优化内存使用"""
     chrome_options = Options()
     chrome_options.add_argument("--headless")  # 无头模式
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    
+    # 内存优化设置
+    chrome_options.add_argument("--disable-gpu")  # 禁用GPU加速
+    chrome_options.add_argument("--disable-extensions")  # 禁用扩展
+    chrome_options.add_argument("--disable-software-rasterizer")  # 禁用软件光栅化
+    chrome_options.add_argument("--disable-webgl")  # 禁用WebGL
+    chrome_options.add_argument("--disable-3d-apis")  # 禁用3D API
+    chrome_options.add_argument("--disable-canvas-aa")  # 禁用画布抗锯齿
+    chrome_options.add_argument("--disable-accelerated-2d-canvas")  # 禁用加速2D画布
+    chrome_options.add_argument("--disable-dev-shm-usage")  # 禁用/dev/shm
+    chrome_options.add_argument("--remote-debugging-port=9222")  # 远程调试端口
+    chrome_options.add_argument("--disable-bundled-ppapi-flash")  # 禁用捆绑的Flash
+    chrome_options.add_argument("--disable-infobars")  # 禁用信息栏
+    chrome_options.add_argument("--mute-audio")  # 静音
+    chrome_options.add_argument("--window-size=800,600")  # 设置较小的窗口尺寸
     
     # 随机或指定User-Agent
     if user_agent is None:
@@ -74,6 +89,17 @@ def get_chrome_options(user_agent=None):
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option("useAutomationExtension", False)
+    
+    # 禁用图片加载以提高性能
+    chrome_options.add_experimental_option("prefs", {
+        "profile.managed_default_content_settings.images": 2,
+        "profile.default_content_setting_values.notifications": 2,
+        "profile.managed_default_content_settings.javascript": 1,
+        "profile.managed_default_content_settings.plugins": 2,
+        "profile.managed_default_content_settings.popups": 2,
+        "profile.managed_default_content_settings.geolocation": 2,
+        "profile.managed_default_content_settings.media_stream": 2
+    })
     
     return chrome_options
 
