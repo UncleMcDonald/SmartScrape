@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableHeader, TableHead, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
-import { Plus, Trash2, Download, FileDown, FileJson, FileSpreadsheet, AlertCircle } from "lucide-react";
+import { Plus, Trash2, FileDown, FileJson, FileSpreadsheet, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, type ChangeEvent, type KeyboardEvent } from "react";
 
@@ -414,27 +414,27 @@ export default function AIScraperUI() {
   };
 
   // Render error messages
-  const renderErrors = () => {
-    if (!urlErrors.length) return null;
+  // const renderErrors = () => {
+  //   if (!urlErrors.length) return null;
     
-    return (
-      <div className="mt-4 border border-red-200 rounded-lg bg-red-50 p-3">
-        <div className="flex items-center gap-2 text-sm text-red-600 font-medium mb-2">
-          <AlertCircle className="h-4 w-4" />
-          Failed URLs
-        </div>
-        <div className="max-h-40 overflow-y-auto">
-          {urlErrors.map((err, i) => (
-            <div key={i} className="text-xs mb-2 pb-2 border-b border-red-100 last:border-0">
-              <div className="font-semibold text-red-700 truncate" title={err.url}>{err.url}</div>
-              <div className="text-red-600">{err.message || "Failed to extract data"}</div>
-              {err.reason && <div className="text-red-500 mt-1">{err.reason}</div>}
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
+  //   return (
+  //     <div className="mt-4 border border-red-200 rounded-lg bg-red-50 p-3">
+  //       <div className="flex items-center gap-2 text-sm text-red-600 font-medium mb-2">
+  //         <AlertCircle className="h-4 w-4" />
+  //         Failed URLs
+  //       </div>
+  //       <div className="max-h-40 overflow-y-auto">
+  //         {urlErrors.map((err, i) => (
+  //           <div key={i} className="text-xs mb-2 pb-2 border-b border-red-100 last:border-0">
+  //             <div className="font-semibold text-red-700 truncate" title={err.url}>{err.url}</div>
+  //             <div className="text-red-600">{err.message || "Failed to extract data"}</div>
+  //             {err.reason && <div className="text-red-500 mt-1">{err.reason}</div>}
+  //           </div>
+  //         ))}
+  //       </div>
+  //     </div>
+  //   );
+  // };
 
   // Replace the URL input rendering with error indicators
   const renderUrlInput = (u: string, i: number) => {
