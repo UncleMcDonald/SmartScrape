@@ -6,7 +6,7 @@ Demo: https://smart-scrape-five.vercel.app/
 
 ⚠️ **Note on Budget Constraints**
 
-Given the $50 monthly budget, running a crawler-based application in the cloud (e.g., Render, Railway) can be quite challenging due to memory and timeout limitations.  
+Given the $50 budget for the AI Challenge, running a crawler-based application in the cloud (e.g., Render, Railway) can be quite challenging due to memory and timeout limitations.  
 To ensure better performance and stability, I kindly suggest running the scraping component **locally**, if possible.
 
 
