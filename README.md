@@ -3,6 +3,8 @@
 SmartScrape Studio is an AI-powered web scraping API that extracts structured data from e-commerce websites. It uses OpenAI's GPT models to intelligently parse content and Selenium for handling dynamic websites.
 
 Demo: https://smart-scrape-five.vercel.app/
+
+[🎥 Watch demo video](https://youtu.be/el4OY9WH6fg)
 ## Features
 
 - **AI-Powered Extraction**: Uses GPT-4o to intelligently extract data from any e-commerce product page

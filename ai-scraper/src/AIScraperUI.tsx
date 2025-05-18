@@ -17,6 +17,16 @@ interface ProductData {
   image_url?: string;
   "Main Image URL"?: string;
   Main_Image_URL?: string;
+  "Image URL"?: string;
+  Image?: string;
+  image?: string;
+  imageUrl?: string;
+  ImageURL?: string;
+  img?: string;
+  imgUrl?: string;
+  ImgURL?: string;
+  src?: string;
+  url?: string;
 }
 
 interface ResultItem {
@@ -73,7 +83,21 @@ export default function AIScraperUI() {
   };
   
   // Image related field names
-  const imageFieldNames = ["Main Image URL", "image_url", "Main_Image_URL"];
+  const imageFieldNames = [
+    "Main Image URL", 
+    "image_url", 
+    "Main_Image_URL", 
+    "Image URL", 
+    "imageUrl", 
+    "ImageURL", 
+    "image", 
+    "Image", 
+    "img", 
+    "imgUrl", 
+    "ImgURL", 
+    "src", 
+    "url"
+  ];
   
   const [results, setResults] = useState<Record<string, any>[]>([]);
 
@@ -84,6 +108,37 @@ export default function AIScraperUI() {
     if (e.key === "Enter" && i === urls.length - 1) {
       e.preventDefault();
       addUrlRow();
+    }
+  };
+
+  // 检查URL是否有效
+  const isValidImageUrl = (url: string | undefined | null): boolean => {
+    if (!url) return false;
+    try {
+      new URL(url); // 尝试解析URL
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // 规范化图片URL的函数
+  const normalizeImageUrl = (url: string | undefined | null): string => {
+    if (!url || !isValidImageUrl(url)) return placeholderImageBase64;
+    
+    // 如果URL不是以http或https开头，添加https前缀
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return `https://${url}`;
+    }
+    
+    return url;
+  };
+
+  // 调试辅助函数 - 记录对象中所有的字段和值
+  const logAllFields = (obj: any, prefix: string = "") => {
+    console.log(`${prefix} - 所有字段:`);
+    for (const key in obj) {
+      console.log(`  ${key}: ${typeof obj[key] === 'string' ? obj[key] : JSON.stringify(obj[key])}`);
     }
   };
 
@@ -114,7 +169,9 @@ export default function AIScraperUI() {
     progressInterval = setInterval(updateProgress, 100);
     
     try {
-      const response = await fetch('http://localhost:5000/api/batch-process', {
+      // 使用提供的生产环境后端地址
+      const apiBaseUrl = 'https://secure-motivation-production.up.railway.app';
+      const response = await fetch(`${apiBaseUrl}/api/batch-process`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -218,10 +275,17 @@ export default function AIScraperUI() {
             });
           
           // Map to friendly names where available
-          let displayColumns = sortedKeys.map(key => preferredOrder[key] || key);
+          let displayColumns = sortedKeys
+            .filter(key => !imageFieldNames.includes(key) && !key.toLowerCase().includes('image'))
+            .map(key => preferredOrder[key] || key);
           
-          // Remove duplicates (e.g. multiple image fields mapping to same "Image" column)
+          // Remove duplicates
           displayColumns = Array.from(new Set(displayColumns));
+          
+          // Add Image column for images if we have image fields and place it at the beginning
+          if (hasImageField) {
+            displayColumns = ["Image", ...displayColumns];
+          }
           
           // Update table columns
           setTableColumns(displayColumns);
@@ -229,37 +293,78 @@ export default function AIScraperUI() {
           // Process successful results for display
           const processedResults = data.data.results
             .filter((result: ResultItem) => result.status === "success")
-            .flatMap((result: ResultItem) => 
-              result.data
+            .flatMap((result: ResultItem) => {
+              // 打印整个result对象以检查数据结构
+              console.log("处理URL:", result.url);
+              console.log("整个result对象:", result);
+              
+              return result.data
                 .filter((item: ProductData) => {
-                  // Exclude any items that have error or reason fields
+                  // 排除有错误或原因字段的项目
                   const itemAsAny = item as any;
-                  return !itemAsAny.error && !itemAsAny.reason;
+                  if (itemAsAny.error) {
+                    console.log("跳过带error字段的项目:", itemAsAny.error);
+                    return false;
+                  }
+                  return true;
                 })
                 .map((item: ProductData) => {
-                  // Create a base result object with image field only if needed
+                  // 记录所有字段以便调试
+                  logAllFields(item, "产品数据项");
+                  
+                  // 创建基本结果对象
                   const resultItem: Record<string, any> = {
                     name: item.name || 'Unknown Name',
                     price: item.price || 'N/A',
                     description: item.description || 'No description available',
                   };
                   
-                  // Only add image property if we have image fields in the data
+                  // 更全面地搜索图片URL
                   if (hasImageField) {
-                    resultItem.image = item.Main_Image_URL || item["Main Image URL"] || item.image_url || placeholderImageBase64;
+                    // 尝试查找所有可能的图片URL字段
+                    let foundImageUrl = null;
+                    
+                    // 优先级1：直接匹配已知的图片字段名
+                    for (const fieldName of imageFieldNames) {
+                      if ((item as any)[fieldName]) {
+                        foundImageUrl = (item as any)[fieldName];
+                        console.log(`找到图片URL(直接匹配): ${fieldName} = ${foundImageUrl}`);
+                        break;
+                      }
+                    }
+                    
+                    // 优先级2：搜索包含'image'或'img'的字段
+                    if (!foundImageUrl) {
+                      for (const key in item) {
+                        if (key.toLowerCase().includes('image') || key.toLowerCase().includes('img') || key.toLowerCase().includes('url')) {
+                          if ((item as any)[key] && typeof (item as any)[key] === 'string') {
+                            foundImageUrl = (item as any)[key];
+                            console.log(`找到图片URL(关键词匹配): ${key} = ${foundImageUrl}`);
+                            break;
+                          }
+                        }
+                      }
+                    }
+                    
+                    // 保存找到的图片URL
+                    resultItem.originalImageUrl = foundImageUrl;
+                    resultItem.previewImage = normalizeImageUrl(foundImageUrl);
+                    
+                    console.log("最终图片URL:", resultItem.originalImageUrl);
+                    console.log("预览图片URL:", resultItem.previewImage);
                   }
                   
-                  // Add all additional fields from the original data, excluding error-related fields
+                  // 添加所有附加字段
                   for (const key of sortedKeys) {
                     if (!['name', 'price', 'description', 'error', 'reason'].includes(key.toLowerCase()) && 
-                        !key.toLowerCase().includes('image')) {
+                        !imageFieldNames.includes(key) && !key.toLowerCase().includes('image')) {
                       resultItem[key] = item[key as keyof ProductData] || '';
                     }
                   }
                   
                   return resultItem;
-                })
-            );
+                });
+            });
           
           setResults(processedResults);
         } catch (err: any) {
@@ -281,14 +386,52 @@ export default function AIScraperUI() {
     }
   }
 
+  // 修改导出清理数据的函数，确保URL处理正确
+  const cleanExportData = (data: any[]): any[] => {
+    return data.map(item => {
+      const cleanedItem: Record<string, any> = {};
+      
+      // 使用原始图片URL进行导出
+      let imageUrl = item.originalImageUrl || null;
+      
+      // 添加所有非图片，非错误字段
+      for (const key in item) {
+        // 跳过错误、原因字段、预览图片或空值
+        if (['error', 'reason', 'previewimage'].includes(key.toLowerCase()) || item[key] === null) {
+          continue;
+        }
+        
+        // 跳过图片相关字段，这些将被单独处理
+        if (imageFieldNames.includes(key) || 
+            key.toLowerCase().includes('image') || 
+            key === 'originalImageUrl') {
+          continue;
+        }
+        
+        // 添加其他字段
+        cleanedItem[key] = item[key];
+      }
+      
+      // 添加单一的图片URL字段
+      if (imageUrl && isValidImageUrl(imageUrl)) {
+        cleanedItem["Image URL"] = imageUrl;
+      }
+      
+      return cleanedItem;
+    });
+  };
+
   const handleExportCSV = () => {
     if (!rawApiData.length) return;
     
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     
+    // Clean the data before export
+    const cleanedData = cleanExportData(rawApiData);
+    
     // Get all unique keys from all data objects
     const allKeys = new Set<string>();
-    rawApiData.forEach(item => {
+    cleanedData.forEach(item => {
       Object.keys(item).forEach(key => allKeys.add(key));
     });
     
@@ -297,10 +440,10 @@ export default function AIScraperUI() {
     // Create rows with all fields
     const rows = [
       headers,
-      ...rawApiData.map(item => 
+      ...cleanedData.map(item => 
         headers.map(key => {
           // Safely access the property which might not exist on all items
-          return (item as any)[key] !== undefined ? (item as any)[key] : '';
+          return item[key] !== undefined ? item[key] : '';
         })
       )
     ];
@@ -323,8 +466,11 @@ export default function AIScraperUI() {
   const handleExportJSON = () => {
     if (!rawApiData.length) return;
     
+    // Clean the data before export
+    const cleanedData = cleanExportData(rawApiData);
+    
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const jsonStr = JSON.stringify(rawApiData, null, 2);
+    const jsonStr = JSON.stringify(cleanedData, null, 2);
     
     const blob = new Blob([jsonStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -347,10 +493,16 @@ export default function AIScraperUI() {
     try {
       console.log("XLSX library loaded:", typeof XLSX);
       
+      // Clean the data before export
+      const cleanedData = cleanExportData(rawApiData);
+      console.log("Data cleaned for export");
+      
       // Get all unique keys from all data objects
       const allKeys = new Set<string>();
-      rawApiData.forEach(item => {
-        Object.keys(item).forEach(key => allKeys.add(key));
+      cleanedData.forEach(item => {
+        Object.keys(item).forEach(key => {
+          allKeys.add(key);
+        });
       });
       
       const headers = Array.from(allKeys);
@@ -360,10 +512,10 @@ export default function AIScraperUI() {
       const wsData = [];
       wsData.push(headers);
       
-      for (const item of rawApiData) {
+      for (const item of cleanedData) {
         const row = [];
         for (const key of headers) {
-          row.push(item[key as keyof typeof item] || '');
+          row.push(item[key] || '');
         }
         wsData.push(row);
       }
@@ -546,21 +698,40 @@ export default function AIScraperUI() {
                         {results.map((item, i) => (
                           <TableRow key={i} className="hover:bg-indigo-50/40">
                             {tableColumns.map((column, j) => {
-                              // Handle image column specially
+                              // Special handling for Image column to show image
                               if (column === 'Image') {
                                 return (
                                   <TableCell key={j} className="p-2">
-                                    {item.image ? (
-                                      <img 
-                                        src={item.image} 
-                                        alt={item.name} 
-                                        className="w-16 h-16 rounded-lg object-cover"
-                                        onError={(e) => {
-                                          const target = e.target as HTMLImageElement;
-                                          target.src = placeholderImageBase64;
-                                        }} 
-                                      />
-                                    ) : null}
+                                    {item.previewImage ? (
+                                      <div className="relative w-16 h-16">
+                                        <img 
+                                          src={item.previewImage} 
+                                          alt={item.name} 
+                                          className="w-16 h-16 rounded-lg object-cover"
+                                          title={`原始URL: ${item.originalImageUrl || '无'}`}
+                                          onError={(e) => {
+                                            const target = e.target as HTMLImageElement;
+                                            console.log("图片加载失败:", target.src);
+                                            console.log("原始图片URL:", item.originalImageUrl);
+                                            target.onerror = null; // 防止无限循环
+                                            target.src = placeholderImageBase64;
+                                            
+                                            // 直接在页面上显示失败信息，便于调试
+                                            const parent = target.parentElement;
+                                            if (parent) {
+                                              const errorInfo = document.createElement('div');
+                                              errorInfo.className = 'absolute inset-0 bg-red-50 bg-opacity-80 text-xs text-red-600 p-1 overflow-hidden';
+                                              errorInfo.textContent = `加载失败: ${item.originalImageUrl ? item.originalImageUrl.substring(0, 30) + '...' : '无URL'}`;
+                                              parent.appendChild(errorInfo);
+                                            }
+                                          }} 
+                                        />
+                                      </div>
+                                    ) : (
+                                      <div className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center">
+                                        <span className="text-xs text-gray-400">No Image</span>
+                                      </div>
+                                    )}
                                   </TableCell>
                                 );
                               }

@@ -36,14 +36,14 @@ Based on this instruction: "{prompt}", extract relevant data and return it in JS
 IMPORTANT RULES:
 1. You MUST ONLY respond with a valid JSON array format.
 2. ALWAYS use the same exact field names for all products you extract.
-3. If you can't extract the data, return an array with an error object: [{{"error": "Unable to extract data", "reason": "Your reason here"}}]
+3. return an array with an error object: [{{"error": "Unable to extract data", "reason": "Your reason here"}}] only if you can't extract any field.， don't return error and reason with success.
 4. Make sure to properly escape all special characters in the JSON.
 
 HTML:
 {html[:3000]}  # truncated to avoid GPT overload
 """
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o",
         messages=[{"role": "user", "content": full_prompt}]
     )
     

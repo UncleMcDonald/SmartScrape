@@ -208,8 +208,170 @@ def scrape_url(url):
             if driver:
                 driver.quit()
 
+def collect_potential_product_images(soup, base_url):
+    """
+    收集页面中可能的产品图片，并进行评分和排序
+    
+    :param soup: BeautifulSoup对象
+    :param base_url: 基础URL，用于转换相对路径
+    :return: 潜在产品图片列表，已按相关性排序
+    """
+    potential_images = []
+    
+    # 1. 优先考虑 Open Graph 图片
+    og = soup.find("meta", property="og:image")
+    if og and og.get("content"):
+        img_url = urljoin(base_url, og["content"])
+        potential_images.append({"url": img_url, "source": "og:image", "score": 100})
+
+    # 2. 寻找产品图片
+    # 不太可能是主图的图片特征
+    non_product_patterns = [
+        r'(icon|logo|avatar|banner|background|button|thumbnail|thumb|nav|header|footer)',
+        r'(/icons/|/logos/|/ui/|/assets/icons/|/svg/)',
+        r'(width|height)=(["|\'])([0-9]+)(["|\']).*?(\\3<50)'  # 尺寸过小的图片
+    ]
+    
+    # 编译正则
+    non_product_regex = [re.compile(pattern, re.I) for pattern in non_product_patterns]
+    
+    # 收集所有可能的产品图片
+    for img in soup.find_all("img"):
+        src = img.get("src") or img.get("data-src") or img.get("data-lazy-src")
+        if not src:
+            continue
+            
+        # 过滤掉不太可能是主图的图片
+        if any(regex.search(str(img)) for regex in non_product_regex):
+            continue
+            
+        # 过滤掉base64和data URI图片
+        if src.startswith('data:'):
+            continue
+        
+        # 计算分数 - 基于图片尺寸与其他特征
+        score = 0
+        
+        # 1. 尺寸分数
+        w = int(img.get("width") or 0)
+        h = int(img.get("height") or 0)
+        size_score = w * h
+        
+        # 限制最大尺寸分数
+        size_score = min(size_score, 1000000)
+        score += size_score / 10000  # 归一化尺寸分数
+        
+        # 2. 产品相关类名或ID加分
+        img_str = str(img)
+        if re.search(r'(product|item|main)[\-_]?(image|img|photo)', img_str, re.I):
+            score += 50
+        
+        # 3. Alt文本包含"product"相关词汇加分
+        alt = img.get("alt", "")
+        if alt and re.search(r'(product|item)', alt, re.I):
+            score += 30
+            
+        # 4. 图片URL包含"product"相关词汇加分
+        if re.search(r'(product|item|main|large)', src, re.I):
+            score += 20
+            
+        # 收集这个潜在的产品图片
+        full_url = urljoin(base_url, src)
+        potential_images.append({
+            "url": full_url,
+            "alt": alt,
+            "source": "img_tag",
+            "score": score,
+            "dimensions": f"{w}x{h}" if w and h else "unknown"
+        })
+
+    # 3. 从JSON-LD中提取
+    ld = soup.find("script", type="application/ld+json")
+    if ld and ld.string:
+        try:
+            # 清理掉注释
+            clean_json = re.sub(r"<!--.*?-->", "", ld.string, flags=re.S)
+            data = json.loads(clean_json)
+            
+            # 处理单个对象或数组
+            if isinstance(data, dict):
+                data_items = [data]
+            elif isinstance(data, list):
+                data_items = data
+            else:
+                data_items = []
+                
+            # 从各种可能的架构中提取图片
+            for item in data_items:
+                if isinstance(item, dict):
+                    # 检查不同的可能键
+                    for img_key in ['image', 'images', 'primaryImage', 'productImage']:
+                        if img_key in item:
+                            img_data = item[img_key]
+                            urls = []
+                            
+                            # 处理多种可能的格式
+                            if isinstance(img_data, list):
+                                for img_item in img_data:
+                                    if isinstance(img_item, str):
+                                        urls.append(img_item)
+                                    elif isinstance(img_item, dict) and 'url' in img_item:
+                                        urls.append(img_item['url'])
+                            elif isinstance(img_data, str):
+                                urls.append(img_data)
+                            elif isinstance(img_data, dict) and 'url' in img_data:
+                                urls.append(img_data['url'])
+                                
+                            # 添加到潜在图片列表
+                            for url in urls:
+                                full_url = urljoin(base_url, url)
+                                potential_images.append({
+                                    "url": full_url,
+                                    "source": f"json_ld_{img_key}",
+                                    "score": 80  # JSON-LD通常包含主要产品图片
+                                })
+        except Exception as e:
+            print(f"Error parsing JSON-LD: {e}")
+
+    # 按评分排序潜在图片
+    potential_images.sort(key=lambda x: x.get("score", 0), reverse=True)
+    
+    # 限制返回的潜在图片数量，避免过多
+    top_images = potential_images[:5] if len(potential_images) > 5 else potential_images
+    
+    return top_images
+
+
+def get_image_selection_prompt(top_images, prompt_str):
+    """
+    生成用于让LLM选择主图的提示词
+    
+    :param top_images: 潜在主图列表
+    :param prompt_str: 原始提示词
+    :return: 增强的提示词
+    """
+    if not top_images:
+        return prompt_str
+        
+    image_info = "\n\nPotential product images found (sorted by relevance):\n"
+    for i, img in enumerate(top_images, 1):
+        image_info += f"{i}. URL: {img['url']}\n"
+        if 'alt' in img and img['alt']:
+            image_info += f"   Alt: {img['alt']}\n"
+        if 'dimensions' in img:
+            image_info += f"   Dimensions: {img['dimensions']}\n"
+        if 'source' in img:
+            image_info += f"   Source: {img['source']}\n"
+    
+    return f"{prompt_str}\n{image_info}\nPlease determine which is the main product image and include it in your response as 'Main Image URL'."
+
+
 def extract_main_content(html: str, base_url: str = "") -> tuple[str, str | None]:
     """
+    提取页面主要内容和主图URL
+    
+    :param html: HTML内容
+    :param base_url: 基础URL
     :return: (clean_text, main_image_url)
     """
     # 检查HTML是否是错误对象
@@ -221,49 +383,52 @@ def extract_main_content(html: str, base_url: str = "") -> tuple[str, str | None
         soup = BeautifulSoup(html, "lxml")
     except FeatureNotFound:
         soup = BeautifulSoup(html, "html.parser")
-
-    # 2️⃣  抓主图 URL —— 先 og:image，再 img，再 JSON-LD
-    img_url = None
-
-    og = soup.find("meta", property="og:image")
-    if og and og.get("content"):
-        img_url = urljoin(base_url, og["content"])
-
-    if not img_url:
-        # 选最大尺寸或 alt 含商品名的一张
-        best, best_score = None, -1
-        for img in soup.find_all("img"):
-            src = img.get("src") or img.get("data-src")
-            if not src:
-                continue
-            w = int(img.get("width") or 0)
-            h = int(img.get("height") or 0)
-            score = w * h                     # 简单面积评分
-            if score > best_score:
-                best, best_score = src, score
-        if best:
-            img_url = urljoin(base_url, best)
-
-    if not img_url:
-        ld = soup.find("script", type="application/ld+json")
-        if ld and ld.string and '"image"' in ld.string:
-            import json, re
-            try:
-                data = json.loads(re.sub(r"<!--.*?-->", "", ld.string, flags=re.S))
-                if isinstance(data, dict) and data.get("image"):
-                    img = data["image"]
-                    img_url = img[0] if isinstance(img, list) else img
-            except:
-                pass
-
+    
+    # 2️⃣ 收集潜在的产品图片
+    top_images = collect_potential_product_images(soup, base_url)
+    
+    # 选择评分最高的图片作为默认值
+    img_url = top_images[0]["url"] if top_images else None
+    
     # 3️⃣  清理无用标签
     for tag in soup(["script", "style", "noscript", "template", "svg"]):
         tag.decompose()
     for tag in soup.select("[hidden], [aria-hidden='true'], [style*='display:none']"):
         tag.decompose()
-
+    
     text = soup.get_text("\n", strip=True)
     return text, img_url
+
+
+def select_main_image_with_llm(structured_data, top_images, main_image):
+    """
+    从LLM返回的结构化数据中提取或确认主图URL
+    
+    :param structured_data: LLM返回的结构化数据
+    :param top_images: 潜在的主图列表
+    :param main_image: 默认选择的主图URL
+    :return: 最终确定的主图URL
+    """
+    if not isinstance(structured_data, list) or not structured_data:
+        return main_image
+        
+    first_item = structured_data[0]
+    
+    # 检查常见的图片字段名
+    image_field_names = [
+        "Main Image URL", "main_image_url", "image_url", "imageUrl", 
+        "MainImageURL", "product_image", "productImage", "image"
+    ]
+    
+    for field in image_field_names:
+        if field in first_item and first_item[field] and first_item[field] not in ["Not found", "Unavailable", "N/A", ""]:
+            # 验证URL格式
+            if re.match(r'^https?://', first_item[field]):
+                return first_item[field]
+    
+    # 如果LLM没有返回有效的图片URL，使用默认的主图
+    return main_image
+
 
 def should_include_image(prompt_str):
     """
@@ -287,6 +452,7 @@ def should_include_image(prompt_str):
             return True
             
     return False
+
 
 def process_product_url(url: str, prompt_str: str = None, llm_processor=None):
     """
@@ -314,20 +480,43 @@ def process_product_url(url: str, prompt_str: str = None, llm_processor=None):
     
     # 2. 从URL获取base_url并使用extract_main_content提取内容
     base_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+    
+    # 解析HTML
+    try:
+        soup = BeautifulSoup(html_content, "lxml")
+    except FeatureNotFound:
+        soup = BeautifulSoup(html_content, "html.parser")
+    
+    # 收集潜在产品图片
+    top_images = []
+    if include_image:
+        top_images = collect_potential_product_images(soup, base_url)
+    
+    # 提取正文和默认主图
     clean_text, main_image = extract_main_content(html_content, base_url)
     
-    # 3. 使用LLM处理器提取结构化数据
-    structured_data = llm_processor(clean_text, prompt_str)
+    # 3. 创建增强的提示词，如果需要图片
+    enhanced_prompt = prompt_str
+    if include_image and top_images:
+        enhanced_prompt = get_image_selection_prompt(top_images, prompt_str)
     
-    # 4. 根据提示词决定是否保留图片URL
-    if isinstance(structured_data, list) and len(structured_data) > 0:
-        # 如果不需要图片URL，从结果中移除
-        if not include_image and "Main Image URL" in structured_data[0]:
-            del structured_data[0]["Main Image URL"]
-        # 如果需要图片URL但LLM未提取到，使用我们提取的
-        elif include_image and structured_data[0].get("Main Image URL") in ["Not found", "Unavailable", None, ""]:
-            if main_image:
-                structured_data[0]["Main Image URL"] = main_image
+    # 4. 使用LLM处理器提取结构化数据
+    structured_data = llm_processor(clean_text, enhanced_prompt)
+    
+    # 5. 处理图片字段
+    if include_image and isinstance(structured_data, list) and len(structured_data) > 0:
+        # 从LLM返回结果中确定主图
+        final_image_url = select_main_image_with_llm(structured_data, top_images, main_image)
+        
+        # 更新结构化数据中的图片URL
+        image_field = next((field for field in ["Main Image URL", "image_url", "image"] 
+                         if field in structured_data[0]), "Main Image URL")
+        structured_data[0][image_field] = final_image_url
+    elif not include_image and isinstance(structured_data, list) and len(structured_data) > 0:
+        # 如果不需要图片URL，移除图片相关字段
+        for field in ["Main Image URL", "image_url", "image", "productImage", "main_image"]:
+            if field in structured_data[0]:
+                del structured_data[0][field]
     
     return structured_data
 
@@ -387,11 +576,11 @@ def analyze_fields_with_llm(prompt_str, llm_processor):
     :return: 标准化的字段列表
     """
     field_analysis_prompt = f"""
-Based on this user instruction: "{prompt_str}", determine what fields/data should be extracted from product pages.
-Return ONLY a JSON array of field names that should be extracted. Example: ["name", "price", "description"]
+    Based on this user instruction: "{prompt_str}", determine what fields/data should be extracted from product pages.
+    Return ONLY a JSON array of field names that should be extracted. Example: ["name", "price", "description"]
 
-IMPORTANT: Keep field names simple, consistent, and in English. Use snake_case format.
-"""
+    IMPORTANT: Keep field names simple, consistent, and in English. Use snake_case format.
+    """
     
     # 调用LLM获取字段列表
     try:
