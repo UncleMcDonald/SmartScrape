@@ -1,7 +1,7 @@
 import os
 
 # 优先从环境变量获取API密钥
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # 应用配置
 DEBUG = os.getenv("FLASK_DEBUG", "True").lower() in ("true", "1", "t")
